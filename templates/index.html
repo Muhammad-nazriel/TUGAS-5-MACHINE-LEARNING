@@ -153,6 +153,25 @@
                     </button>
                   </div>
                 </div>
+                <hr class="my-3">
+                <div class="row g-3">
+                  <div class="col-12 col-md-6">
+                    <label class="form-label"><i class="bi bi-diagram-3 me-1"></i>Metode Kalibrasi</label>
+                    <select name="calibration" class="form-select">
+                      <option value="isotonic" {% if selected_calibration=='isotonic' %}selected{% endif %}>Isotonic</option>
+                      <option value="sigmoid" {% if selected_calibration=='sigmoid' %}selected{% endif %}>Sigmoid (Platt)</option>
+                      <option value="raw" {% if selected_calibration not in ['isotonic','sigmoid'] %}selected{% endif %}>Tanpa Kalibrasi</option>
+                    </select>
+                  </div>
+                  <div class="col-12 col-md-6">
+                    <label class="form-label"><i class="bi bi-sliders me-1"></i>Ambang (Threshold)</label>
+                    <div class="d-flex align-items-center gap-2">
+                      <input name="threshold" id="threshold" type="range" min="0" max="1" step="0.01" class="form-range flex-grow-1" value="{{ '%.2f'|format(threshold) if threshold is not none else '0.50' }}">
+                      <span id="threshold-value" class="badge bg-secondary-subtle text-dark">{{ '%.2f'|format(threshold) if threshold is not none else '0.50' }}</span>
+                    </div>
+                    <div class="form-text">Label risiko ditentukan oleh probabilitas ≥ threshold.</div>
+                  </div>
+                </div>
               </form>
             </div>
           </div>
@@ -172,6 +191,21 @@
                 {{ prediction_text }}
                 {% if risk_prob is not none %}
                   <div class="small opacity-75">Probabilitas risiko: {{ '%.2f'|format(risk_prob*100) }}%</div>
+                {% endif %}
+                {% if decision_details %}
+                  <hr class="my-2">
+                  <div class="small">
+                    <div class="fw-semibold mb-1">Detail Keputusan</div>
+                    <ul class="mb-1">
+                      {% for r in decision_details.rules %}
+                      <li>{{ r }}</li>
+                      {% endfor %}
+                      {% if decision_details.rules|length == 0 %}
+                      <li>Jalur keputusan tidak tersedia.</li>
+                      {% endif %}
+                    </ul>
+                    <div class="text-muted">Daun: negatif={{ decision_details.leaf_counts.negatif|default(0) }}, positif={{ decision_details.leaf_counts.positif|default(0) }}</div>
+                  </div>
                 {% endif %}
               </div>
               {% else %}
@@ -334,6 +368,15 @@
         const hasil = document.getElementById('hasil');
         if (hasil) hasil.scrollIntoView({behavior:'smooth', block:'start'});
         {% endif %}
+
+        // Threshold slider label update
+        const thr = document.getElementById('threshold');
+        const thrVal = document.getElementById('threshold-value');
+        if (thr && thrVal) {
+          const updateThr = ()=>{ thrVal.textContent = parseFloat(thr.value).toFixed(2); };
+          thr.addEventListener('input', updateThr);
+          updateThr();
+        }
       });
     </script>
 

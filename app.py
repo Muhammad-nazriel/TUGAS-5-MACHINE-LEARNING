@@ -11,6 +11,7 @@ import seaborn as sns
 from sklearn.metrics import ConfusionMatrixDisplay, RocCurveDisplay, accuracy_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 from itertools import islice
+from sklearn.calibration import CalibratedClassifierCV
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, 'decision_tree_modelB.joblib')
@@ -20,8 +21,33 @@ STATIC_DIR = os.path.join(BASE_DIR, 'static')
 DATASET_LOCAL = os.path.join(STATIC_DIR, 'heart.csv')
 DATASET_URL = 'https://raw.githubusercontent.com/plotly/datasets/master/heart.csv'
 
+# Feature order expected by the model
+FEATURES = [
+    'age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg',
+    'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal'
+]
+
 # Load model and metrics
 model = joblib.load(MODEL_PATH)
+calibrated_isotonic = None
+calibrated_sigmoid = None
+try:
+    if os.path.exists(DATASET_LOCAL):
+        df_cal = pd.read_csv(DATASET_LOCAL)
+    else:
+        df_cal = pd.read_csv(DATASET_URL)
+    if all(c in df_cal.columns for c in FEATURES + ['target']):
+        Xc = df_cal[FEATURES]
+        yc = df_cal['target']
+        # gunakan sebagian data sebagai data kalibrasi agar tidak leak training asli
+        _, Xc_cal, _, yc_cal = train_test_split(Xc, yc, test_size=0.3, random_state=42, stratify=yc)
+        calibrated_isotonic = CalibratedClassifierCV(base_estimator=model, cv='prefit', method='isotonic')
+        calibrated_isotonic.fit(Xc_cal, yc_cal)
+        calibrated_sigmoid = CalibratedClassifierCV(base_estimator=model, cv='prefit', method='sigmoid')
+        calibrated_sigmoid.fit(Xc_cal, yc_cal)
+except Exception:
+    calibrated_isotonic = None
+    calibrated_sigmoid = None
 metrics = {}
 if os.path.exists(METRICS_PATH):
     with open(METRICS_PATH, 'r', encoding='utf-8') as f:
@@ -29,12 +55,6 @@ if os.path.exists(METRICS_PATH):
 
 # Ensure folders exist
 os.makedirs(PLOTS_DIR, exist_ok=True)
-
-# Feature order expected by the model
-FEATURES = [
-    'age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg',
-    'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal'
-]
 
 app = Flask(__name__)
 
@@ -198,12 +218,45 @@ def build_presets(model, max_each=5):
         presets[key] = entry
     return presets
 
+def explain_tree_decision(model, feature_names, X):
+    try:
+        if not hasattr(model, 'tree_'):
+            return None
+        node_indicator = model.decision_path(X)
+        leaf_id = model.apply(X)[0]
+        feature = model.tree_.feature
+        threshold = model.tree_.threshold
+        value = model.tree_.value
+        rules = []
+        start = node_indicator.indptr[0]
+        end = node_indicator.indptr[1]
+        for node_id in node_indicator.indices[start:end]:
+            if node_id == leaf_id:
+                continue
+            feat_idx = feature[node_id]
+            if feat_idx < 0:
+                continue
+            thr = threshold[node_id]
+            val = float(X[0, feat_idx])
+            op = '<=' if val <= thr else '>'
+            rules.append(f"{feature_names[feat_idx]} {op} {thr:.3f} (nilai={val:.3f})")
+        counts = value[leaf_id][0]
+        leaf_counts = {'negatif': int(counts[0])}
+        if len(counts) > 1:
+            leaf_counts['positif'] = int(counts[1])
+        return {'rules': rules, 'leaf_counts': leaf_counts}
+    except Exception:
+        return None
+
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
     prediction_text = None
     risk_prob = None
     is_risky = None
+    decision_details = None
+    selected_calibration = 'isotonic'
+    threshold = 0.5
 
     # default values for convenience
     defaults = {
@@ -216,6 +269,13 @@ def index():
 
     if request.method == 'POST':
         try:
+            # read calibration and threshold controls
+            selected_calibration = request.form.get('calibration', 'isotonic')
+            try:
+                threshold = float(request.form.get('threshold', '0.5'))
+            except Exception:
+                threshold = 0.5
+            threshold = max(0.0, min(1.0, threshold))
             # Convert inputs to correct dtypes
             x_input = []
             for feat in FEATURES:
@@ -228,12 +288,17 @@ def index():
                     x_input.append(int(float(val)))
 
             X = np.array([x_input])
-            y_pred = model.predict(X)[0]
-            is_risky = int(y_pred) == 1
-
-            if hasattr(model, 'predict_proba'):
+            # get probability based on chosen calibration
+            if selected_calibration == 'isotonic' and calibrated_isotonic is not None:
+                proba = calibrated_isotonic.predict_proba(X)[0][1]
+            elif selected_calibration == 'sigmoid' and calibrated_sigmoid is not None:
+                proba = calibrated_sigmoid.predict_proba(X)[0][1]
+            elif hasattr(model, 'predict_proba'):
                 proba = model.predict_proba(X)[0][1]
-                risk_prob = float(proba)
+            else:
+                proba = float(model.predict(X)[0])
+            risk_prob = float(proba)
+            is_risky = risk_prob >= threshold
 
             if is_risky:
                 prediction_text = 'Pasien Berisiko Penyakit Jantung'
@@ -242,6 +307,7 @@ def index():
 
             # Keep submitted values in the form
             defaults.update({feat: request.form.get(feat) for feat in FEATURES})
+            decision_details = explain_tree_decision(model, FEATURES, X)
         except Exception:
             prediction_text = 'Input tidak valid. Periksa kembali nilai fitur Anda.'
 
@@ -263,6 +329,9 @@ def index():
         accuracy=accuracy,
         plot_urls=plot_urls,
         presets=presets,
+        decision_details=decision_details,
+        selected_calibration=selected_calibration,
+        threshold=threshold,
     )
 
 
