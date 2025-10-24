@@ -1,0 +1,25 @@
+# Virtual environments
+.venv/
+venv/
+ENV/
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pkl
+*.joblib
+!decision_tree_modelB.joblib
+
+# Jupyter/IPython
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
