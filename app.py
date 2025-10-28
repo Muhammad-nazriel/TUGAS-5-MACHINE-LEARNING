@@ -14,11 +14,15 @@ from itertools import islice
 from sklearn.calibration import CalibratedClassifierCV
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, 'decision_tree_modelB.joblib')
+MODEL_CANDIDATES = [
+    os.path.join(BASE_DIR, 'model', 'decision_tree_model.pkl'),
+    os.path.join(BASE_DIR, 'decision_tree_modelB.joblib')
+]
+MODEL_PATH = next((p for p in MODEL_CANDIDATES if os.path.exists(p)), MODEL_CANDIDATES[0])
 METRICS_PATH = os.path.join(BASE_DIR, 'metrics.json')
 PLOTS_DIR = os.path.join(BASE_DIR, 'static', 'plots')
 STATIC_DIR = os.path.join(BASE_DIR, 'static')
-DATASET_LOCAL = os.path.join(STATIC_DIR, 'heart.csv')
+DATASET_LOCAL = os.path.join(BASE_DIR, 'data', 'heart.csv')
 DATASET_URL = 'https://raw.githubusercontent.com/plotly/datasets/master/heart.csv'
 
 # Feature order expected by the model
